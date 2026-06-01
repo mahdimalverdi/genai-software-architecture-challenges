@@ -5,7 +5,6 @@ from pathlib import Path
 import argparse
 import json
 import re
-import sys
 import time
 import urllib.error
 import urllib.parse
@@ -94,20 +93,20 @@ def parse_entry(raw_entry: str) -> BibEntry | None:
     if not lines:
         return None
 
-    match = ENTRY_START.match(lines[0])
-    if not match:
+    entry_match = ENTRY_START.match(lines[0])
+    if not entry_match:
         return None
 
     fields = {}
     for line in lines[1:-1]:
-        match = FIELD_LINE.match(line)
-        if not match:
+        field_match = FIELD_LINE.match(line)
+        if not field_match:
             continue
-        fields[match.group("name")] = strip_bib_value(match.group("value"))
+        fields[field_match.group("name")] = strip_bib_value(field_match.group("value"))
 
     return BibEntry(
-        entry_type=match.group("type"),
-        key=match.group("key").strip(),
+        entry_type=entry_match.group("type"),
+        key=entry_match.group("key").strip(),
         fields=fields,
         raw=raw_entry,
     )
