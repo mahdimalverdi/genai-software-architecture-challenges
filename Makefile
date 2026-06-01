@@ -27,7 +27,7 @@ refresh-references:
 	python3 scripts/update_references_from_doi.py
 
 refresh-books:
-	python3 scripts/update_books_metadata.py --min-score 0.72
+	python3 scripts/update_books_metadata.py
 
 repair-reference-keys:
 	python3 scripts/repair_reference_keys.py
