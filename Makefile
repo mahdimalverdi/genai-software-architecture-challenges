@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: tex pdf clean fix-references check-references verify-references
+.PHONY: tex pdf clean fix-references check-references verify-references fill-dois
 
 tex:
 	python3 scripts/build_tex.py
@@ -19,3 +19,6 @@ check-references:
 
 verify-references:
 	python3 scripts/verify_references.py
+
+fill-dois:
+	python3 scripts/fill_dois.py
