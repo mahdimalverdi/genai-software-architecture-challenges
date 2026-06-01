@@ -26,6 +26,8 @@ FIELD_ORDER = [
     "note",
 ]
 
+ARXIV_JOURNAL_RE = re.compile(r"\{?arXiv preprint arXiv:[0-9.]+\}?", re.IGNORECASE)
+
 
 def split_entries(text: str) -> tuple[list[str], list[str]]:
     header = []
@@ -76,8 +78,31 @@ def parse_entry(entry: str) -> tuple[str, str, dict[str, str]]:
     return entry_type, key, fields
 
 
+def normalize_entry(entry_type: str, fields: dict[str, str]) -> tuple[str, dict[str, str]]:
+    normalized_fields = dict(fields)
+    has_booktitle = bool(normalized_fields.get("booktitle"))
+    has_journal = bool(normalized_fields.get("journal"))
+
+    if has_booktitle:
+        journal = normalized_fields.get("journal", "")
+        if ARXIV_JOURNAL_RE.fullmatch(journal.strip()):
+            normalized_fields.pop("journal", None)
+        entry_type = "inproceedings"
+
+    if has_journal and not has_booktitle:
+        entry_type = "article"
+
+    if entry_type == "inproceedings":
+        normalized_fields.pop("journal", None)
+    elif entry_type == "article":
+        normalized_fields.pop("booktitle", None)
+
+    return entry_type, normalized_fields
+
+
 def format_entry(entry: str) -> str:
     entry_type, key, fields = parse_entry(entry)
+    entry_type, fields = normalize_entry(entry_type, fields)
     ordered_names = [name for name in FIELD_ORDER if name in fields]
     extra_names = sorted(name for name in fields if name not in FIELD_ORDER)
     names = ordered_names + extra_names
