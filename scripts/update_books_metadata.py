@@ -5,6 +5,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 import argparse
 import json
+import os
 import re
 import time
 import urllib.error
@@ -13,6 +14,9 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 BIB_PATH = ROOT / "references" / "references.bib"
+CROSSREF_WORKS_URL = "https://api.crossref.org/works"
+OPEN_LIBRARY_SEARCH_URL = "https://openlibrary.org/search.json"
+GOOGLE_BOOKS_SEARCH_URL = "https://www.googleapis.com/books/v1/volumes"
 
 ENTRY_START = re.compile(r"^@(?P<type>[A-Za-z]+)\s*\{\s*(?P<key>[^,]+)\s*,")
 FIELD_LINE = re.compile(r"^\s*(?P<name>[A-Za-z][A-Za-z0-9_-]*)\s*=\s*(?P<value>.+?)(?P<comma>,?)\s*$")
@@ -23,6 +27,7 @@ FIELD_ORDER = [
     "publisher",
     "year",
     "isbn",
+    "doi",
     "url",
     "note",
 ]
@@ -60,7 +65,10 @@ def title_score(left: str, right: str) -> float:
 
 
 def request_json(url: str, timeout_seconds: int = 20) -> dict:
-    request = urllib.request.Request(url, headers={"User-Agent": "genai-software-architecture-challenges/1.0"})
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "genai-software-architecture-challenges/1.0"},
+    )
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         return json.loads(response.read().decode("utf-8", errors="replace"))
 
@@ -121,9 +129,71 @@ def isbn_from_identifiers(identifiers: list[dict]) -> str | None:
     return None
 
 
+def first_year(work: dict) -> str:
+    for field in ["published-print", "published-online", "published", "issued"]:
+        date_parts = work.get(field, {}).get("date-parts")
+        if date_parts and date_parts[0]:
+            return str(date_parts[0][0])
+    return ""
+
+
+def crossref_author(author: dict) -> str | None:
+    family = author.get("family")
+    given = author.get("given")
+    name = author.get("name")
+    if family and given:
+        return f"{family}, {given}"
+    if family:
+        return family
+    if name:
+        return name
+    return None
+
+
+def crossref_candidates(title: str) -> list[dict[str, str]]:
+    params = {
+        "query.title": title,
+        "rows": "8",
+        "select": "DOI,title,author,publisher,issued,published,published-print,published-online,URL,type,ISBN",
+        "filter": "type:book",
+    }
+    url = CROSSREF_WORKS_URL + "?" + urllib.parse.urlencode(params)
+    candidates = []
+    try:
+        items = request_json(url).get("message", {}).get("items", [])
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
+        print(f"WARN: Crossref lookup failed for {title}: {error}")
+        return candidates
+
+    for item in items:
+        authors = []
+        for author in item.get("author", []):
+            formatted_author = crossref_author(author)
+            if formatted_author:
+                authors.append(formatted_author)
+        isbn_values = item.get("ISBN") or []
+        candidates.append(
+            {
+                "source": "crossref",
+                "title": (item.get("title") or [""])[0],
+                "author": " and ".join(authors),
+                "publisher": item.get("publisher", ""),
+                "year": first_year(item),
+                "isbn": isbn_values[0] if isbn_values else "",
+                "doi": (item.get("DOI") or "").lower(),
+                "url": item.get("URL", ""),
+            }
+        )
+    return candidates
+
+
 def google_books_candidates(title: str) -> list[dict[str, str]]:
-    query = urllib.parse.quote(f'intitle:"{title}"')
-    url = f"https://www.googleapis.com/books/v1/volumes?q={query}&maxResults=5"
+    api_key = os.environ.get("GOOGLE_BOOKS_API_KEY")
+    if not api_key:
+        return []
+
+    params = {"q": f'intitle:"{title}"', "maxResults": "5", "key": api_key}
+    url = GOOGLE_BOOKS_SEARCH_URL + "?" + urllib.parse.urlencode(params)
     candidates = []
     try:
         items = request_json(url).get("items", [])
@@ -132,21 +202,23 @@ def google_books_candidates(title: str) -> list[dict[str, str]]:
         return candidates
     for item in items:
         info = item.get("volumeInfo", {})
-        candidate = {
-            "source": "google-books",
-            "title": info.get("title", ""),
-            "author": " and ".join(info.get("authors", [])),
-            "publisher": info.get("publisher", ""),
-            "year": (info.get("publishedDate", "") or "")[:4],
-            "isbn": isbn_from_identifiers(info.get("industryIdentifiers", [])) or "",
-            "url": info.get("canonicalVolumeLink") or info.get("infoLink") or "",
-        }
-        candidates.append(candidate)
+        candidates.append(
+            {
+                "source": "google-books",
+                "title": info.get("title", ""),
+                "author": " and ".join(info.get("authors", [])),
+                "publisher": info.get("publisher", ""),
+                "year": (info.get("publishedDate", "") or "")[:4],
+                "isbn": isbn_from_identifiers(info.get("industryIdentifiers", [])) or "",
+                "doi": "",
+                "url": info.get("canonicalVolumeLink") or info.get("infoLink") or "",
+            }
+        )
     return candidates
 
 
 def open_library_candidates(title: str) -> list[dict[str, str]]:
-    url = "https://openlibrary.org/search.json?" + urllib.parse.urlencode({"title": title, "limit": "5"})
+    url = OPEN_LIBRARY_SEARCH_URL + "?" + urllib.parse.urlencode({"title": title, "limit": "8"})
     candidates = []
     try:
         docs = request_json(url).get("docs", [])
@@ -163,6 +235,7 @@ def open_library_candidates(title: str) -> list[dict[str, str]]:
                 "publisher": (doc.get("publisher") or [""])[0],
                 "year": str(doc.get("first_publish_year") or ""),
                 "isbn": isbn_values[0] if isbn_values else "",
+                "doi": "",
                 "url": "https://openlibrary.org" + doc.get("key", "") if doc.get("key") else "",
             }
         )
@@ -179,11 +252,13 @@ def score_candidate(entry_title: str, entry_year: str | None, candidate: dict[st
         score += 0.02
     if candidate.get("isbn"):
         score += 0.03
+    if candidate.get("doi"):
+        score += 0.03
     return min(score, 1.0)
 
 
 def best_candidate(title: str, year: str | None, min_score: float) -> tuple[dict[str, str] | None, float]:
-    candidates = google_books_candidates(title) + open_library_candidates(title)
+    candidates = crossref_candidates(title) + open_library_candidates(title) + google_books_candidates(title)
     best = None
     best_score = 0.0
     for candidate in candidates:
@@ -198,7 +273,7 @@ def best_candidate(title: str, year: str | None, min_score: float) -> tuple[dict
 
 def update_entry(entry: BibEntry, candidate: dict[str, str], only_missing: bool, remove_todo_note: bool) -> BibEntry:
     fields = dict(entry.fields)
-    for name in ["title", "author", "publisher", "year", "isbn", "url"]:
+    for name in ["title", "author", "publisher", "year", "isbn", "doi", "url"]:
         value = candidate.get(name)
         if not value:
             continue
@@ -222,7 +297,7 @@ def add_missing_title(entries: list[BibEntry], key: str, title: str, year: str |
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Complete BibTeX book metadata using Google Books and Open Library.")
+    parser = argparse.ArgumentParser(description="Complete BibTeX book metadata using Crossref, Open Library, and Google Books if configured.")
     parser.add_argument("--title", help="Add this book title if it is not already present.")
     parser.add_argument("--key", default="engineeringAiSystems2025", help="BibTeX key for --title when adding a new book.")
     parser.add_argument("--year", help="Expected publication year for --title.")
