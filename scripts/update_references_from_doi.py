@@ -36,11 +36,10 @@ FIELD_ORDER = [
     "note",
 ]
 
-PRESERVED_FIELDS = {
-    "archivePrefix",
-    "eprint",
-    "note",
-}
+PRESERVED_FIELDS = {"archivePrefix", "eprint", "note"}
+CONFERENCE_TYPES = {"conference-paper", "proceedings-article"}
+JOURNAL_TYPES = {"journal-article", "journal-issue", "journal-volume"}
+BOOK_TYPES = {"book", "monograph"}
 
 
 @dataclass
@@ -113,17 +112,13 @@ def parse_entry(raw_entry: str) -> BibEntry | None:
 
 
 def request_json(url: str, timeout_seconds: int = 20) -> dict:
-    request = urllib.request.Request(
-        url,
-        headers={"User-Agent": "genai-software-architecture-challenges/1.0"},
-    )
+    request = urllib.request.Request(url, headers={"User-Agent": "genai-software-architecture-challenges/1.0"})
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         return json.loads(response.read().decode("utf-8", errors="replace"))
 
 
 def fetch_crossref_work(doi: str) -> dict | None:
-    encoded_doi = urllib.parse.quote(doi.strip(), safe="")
-    url = CROSSREF_WORKS_URL + encoded_doi
+    url = CROSSREF_WORKS_URL + urllib.parse.quote(doi.strip(), safe="")
     try:
         data = request_json(url)
     except urllib.error.HTTPError as error:
@@ -136,6 +131,19 @@ def fetch_crossref_work(doi: str) -> dict | None:
     return data.get("message")
 
 
+def crossref_entry_type(work: dict, fallback: str) -> str:
+    work_type = work.get("type", "")
+    if work_type in CONFERENCE_TYPES:
+        return "inproceedings"
+    if work_type in JOURNAL_TYPES:
+        return "article"
+    if work_type in BOOK_TYPES:
+        return "book"
+    if work_type == "book-chapter":
+        return "incollection"
+    return fallback
+
+
 def crossref_year(work: dict) -> str | None:
     for field in ["published-print", "published-online", "published", "issued"]:
         date_parts = work.get(field, {}).get("date-parts")
@@ -144,17 +152,9 @@ def crossref_year(work: dict) -> str | None:
     return None
 
 
-def crossref_title(work: dict) -> str | None:
-    titles = work.get("title") or []
-    if titles:
-        return " ".join(titles[0].split())
-    return None
-
-
-def crossref_container_title(work: dict) -> str | None:
-    titles = work.get("container-title") or []
-    if titles:
-        return " ".join(titles[0].split())
+def first_item(values: list | None) -> str | None:
+    if values:
+        return " ".join(str(values[0]).split())
     return None
 
 
@@ -162,7 +162,6 @@ def crossref_author(author: dict) -> str | None:
     family = author.get("family")
     given = author.get("given")
     name = author.get("name")
-
     if family and given:
         return f"{family}, {given}"
     if family:
@@ -181,49 +180,40 @@ def crossref_authors(work: dict) -> str | None:
     return " and ".join(authors) if authors else None
 
 
-def crossref_pages(work: dict) -> str | None:
-    page = work.get("page")
-    return page if page else None
-
-
 def crossref_fields(work: dict, existing_fields: dict[str, str]) -> dict[str, str]:
     fields = {}
+    work_type = work.get("type", "")
 
     authors = crossref_authors(work)
-    title = crossref_title(work)
+    title = first_item(work.get("title"))
+    container_title = first_item(work.get("container-title"))
     year = crossref_year(work)
-    container_title = crossref_container_title(work)
-    publisher = work.get("publisher")
-    doi = work.get("DOI")
-    url = work.get("URL")
-    volume = work.get("volume")
-    number = work.get("issue")
-    pages = crossref_pages(work)
-    work_type = work.get("type", "")
 
     if authors:
         fields["author"] = authors
     if title:
         fields["title"] = title
     if container_title:
-        if work_type in {"proceedings-article", "conference-paper"}:
+        if work_type in CONFERENCE_TYPES:
             fields["booktitle"] = container_title
+        elif work_type in JOURNAL_TYPES:
+            fields["journal"] = container_title
         else:
             fields["journal"] = container_title
-    if publisher:
-        fields["publisher"] = publisher
+    if work.get("publisher"):
+        fields["publisher"] = work["publisher"]
     if year:
         fields["year"] = year
-    if volume:
-        fields["volume"] = volume
-    if number:
-        fields["number"] = number
-    if pages:
-        fields["pages"] = pages
-    if doi:
-        fields["doi"] = doi.lower()
-    if url:
-        fields["url"] = url
+    if work.get("volume"):
+        fields["volume"] = work["volume"]
+    if work.get("issue"):
+        fields["number"] = work["issue"]
+    if work.get("page"):
+        fields["pages"] = work["page"]
+    if work.get("DOI"):
+        fields["doi"] = work["DOI"].lower()
+    if work.get("URL"):
+        fields["url"] = work["URL"]
 
     for field in PRESERVED_FIELDS:
         if existing_fields.get(field):
@@ -232,20 +222,31 @@ def crossref_fields(work: dict, existing_fields: dict[str, str]) -> dict[str, st
     return fields
 
 
-def merge_fields(existing: dict[str, str], fresh: dict[str, str], only_missing: bool) -> dict[str, str]:
+def remove_stale_fields(fields: dict[str, str], entry_type: str, fresh: dict[str, str]) -> dict[str, str]:
+    cleaned = dict(fields)
+    if entry_type == "inproceedings" or "booktitle" in fresh:
+        cleaned.pop("journal", None)
+    if entry_type == "article" or "journal" in fresh:
+        cleaned.pop("booktitle", None)
+    if entry_type not in {"article", "inproceedings"}:
+        cleaned.pop("journal", None)
+        cleaned.pop("booktitle", None)
+    return cleaned
+
+
+def merge_fields(existing: dict[str, str], fresh: dict[str, str], only_missing: bool, entry_type: str) -> dict[str, str]:
     merged = dict(existing)
     for key, value in fresh.items():
         if only_missing and merged.get(key):
             continue
         merged[key] = value
-    return merged
+    return remove_stale_fields(merged, entry_type, fresh)
 
 
 def format_entry(entry_type: str, key: str, fields: dict[str, str]) -> str:
     ordered_names = [name for name in FIELD_ORDER if name in fields]
     extra_names = sorted(name for name in fields if name not in FIELD_ORDER)
     names = ordered_names + extra_names
-
     lines = [f"@{entry_type}{{{key},"]
     for index, name in enumerate(names):
         comma = "," if index < len(names) - 1 else ""
@@ -282,14 +283,14 @@ def main() -> None:
             updated_entries.append(raw_entry)
             continue
 
+        entry_type = crossref_entry_type(work, entry.entry_type)
         fresh_fields = crossref_fields(work, entry.fields)
-        merged_fields = merge_fields(entry.fields, fresh_fields, args.only_missing)
-        formatted_entry = format_entry(entry.entry_type, entry.key, merged_fields)
+        merged_fields = merge_fields(entry.fields, fresh_fields, args.only_missing, entry_type)
+        formatted_entry = format_entry(entry_type, entry.key, merged_fields)
         updated_entries.append(formatted_entry if not args.dry_run else raw_entry)
         updated_count += 1
-
         title = fresh_fields.get("title", entry.fields.get("title", ""))
-        print(f"UPDATED {entry.key}: {doi} :: {title}")
+        print(f"UPDATED {entry.key}: @{entry.entry_type} -> @{entry_type} :: {doi} :: {title}")
         time.sleep(args.sleep)
 
     if not args.dry_run:
