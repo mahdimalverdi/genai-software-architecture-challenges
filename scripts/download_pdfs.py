@@ -1,8 +1,4 @@
 #!/usr/bin/env python3
-"""Download freely available arXiv PDFs from references/references.bib."""
-
-from __future__ import annotations
-
 import re
 import time
 from pathlib import Path
@@ -10,13 +6,12 @@ from urllib.parse import quote
 
 import requests
 
-BIB_PATH = Path("references/references.bib")
-OUT_DIR = Path("references/pdfs")
-TIMEOUT_SECONDS = 30
-DELAY_SECONDS = 1.0
+bib = Path('references/references.bib').read_text(encoding='utf-8')
+out = Path('references/pdfs')
+out.mkdir(parents=True, exist_ok=True)
 
+entries = re.findall(r'@\w+\s*\{([^,]+),(.+?)(?=\n@|\Z)', bib, re.S)
+count = 0
 
-def slugify(value: str) -> str:
-    value = value.lower()
-    value = re.sub(r"[^a-z0-9]+", "-", value)
-    return
+for key, body in entries:
+    title_match = re.search(r'title\s
