@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
-import re
-import time
 from pathlib import Path
-
+import time
 import requests
 
-bib = Path('references/references.bib').read_text(encoding='utf-8')
-out = Path('references/pdfs')
-out.mkdir(parents=True, exist_ok=True)
+bib_path = Path('references/references.bib')
+out_dir = Path('references/pdfs')
+out_dir.mkdir(parents=True, exist_ok=True)
 
-entries = re.findall(r'@\w+\s*\{([^,]+),(.+?)(?=\n@|\Z)', bib, re.S)
+current_key = None
+seen = 0
+saved = 0
 
-for key, body in entries:
-    match = re.search(r'eprint\s*=\s*[\{\"]([^\}\
+for line in bib_path.read_text(encoding='utf-8').splitlines():
+    stripped = line.strip()
+
+    if stripped.startswith('@'):
+        marker = stripped.split(',', 1)[0]
+        current_key = marker.split
