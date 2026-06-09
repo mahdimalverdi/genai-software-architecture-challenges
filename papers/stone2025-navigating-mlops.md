@@ -7,8 +7,4 @@
 - سال: 2025
 - نویسندگان: Jasper Stone، Raj Patel، Farbod Ghiasi، Sudip Mittal، Shahram Rahimi
 - محل انتشار / ناشر: 2025 IEEE Conference on Artificial Intelligence / IEEE
-- وضعیت مطالعه: خلاصه‌شده
-
-## مسئله‌ی اصلی
-
-این مقاله مسئ
+- وضعیت مطالعه:
