@@ -1,12 +1,21 @@
 SHELL := /bin/bash
 
-.PHONY: tex pdf clean fix-references check-references verify-references fill-dois refresh-references refresh-books repair-reference-keys
+.PHONY: tex pdf clean pdf-deps pdf-clean pdf-build fix-references check-references verify-references fill-dois refresh-references refresh-books repair-reference-keys
 
 tex:
 	python3 scripts/build_tex.py
 
 pdf: tex
 	bash scripts/build_pdf.sh
+
+pdf-deps:
+	sudo apt update
+	sudo apt install -y latexmk texlive-xetex texlive-lang-arabic texlive-binaries fonts-hosny-amiri
+
+pdf-clean:
+	rm -rf build/latex build/pdf
+
+pdf-build: pdf-clean pdf
 
 clean:
 	python3 scripts/clean.py
