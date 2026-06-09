@@ -1,17 +1,13 @@
 #!/usr/bin/env python3
-import re
-import time
+import re,time
 from pathlib import Path
-from urllib.parse import quote
-
 import requests
-
-bib = Path('references/references.bib').read_text(encoding='utf-8')
-out = Path('references/pdfs')
-out.mkdir(parents=True, exist_ok=True)
-
-entries = re.findall(r'@\w+\s*\{([^,]+),(.+?)(?=\n@|\Z)', bib, re.S)
-count = 0
-
-for key, body in entries:
-    title_match = re.search(r'title\s
+bib=Path('references/references.bib').read_text()
+out=Path('references/pdfs');out.mkdir(parents=True,exist_ok=True)
+for k,b in re.findall(r'@(\w+)\{([^,]+),(.+?)(?=\n@|\Z)',bib,re.S):
+    m=re.search(r'eprint\s*=\s*[{\"]([^}\"]+)',b)
+    if not m: continue
+    eid=m.group(1).strip()
+    p=out/f'{k}-{eid}.pdf'
+    if p.exists(): continue
+    r=requests.get(f'https://arxiv.org/pdf/{eid
