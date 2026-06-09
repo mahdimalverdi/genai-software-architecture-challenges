@@ -10,7 +10,7 @@ pdf: tex
 
 pdf-deps:
 	sudo apt update
-	sudo apt install -y latexmk texlive-xetex texlive-lang-arabic texlive-binaries fonts-hosny-amiri
+	sudo apt install -y texlive-xetex texlive-lang-arabic texlive-bibtex-extra texlive-fonts-recommended texlive-latex-recommended texlive-latex-extra texlive-binaries fonts-hosny-amiri
 
 pdf-clean:
 	rm -rf build/latex build/pdf
